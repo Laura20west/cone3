@@ -1,4 +1,4 @@
-from fastapi import FastAPI, HTTPException, Request
+from fastapi import FastAPI, HTTPException, Request, Depends
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 import spacy
@@ -7,11 +7,10 @@ from datetime import datetime
 from pathlib import Path
 import uuid
 import random
-from collections import defaultdict, deque
+from collections import defaultdict, deque, Counter
 import nltk
 from nltk.corpus import wordnet as wn
 from typing import Dict, List, Optional
-from collections import Counter
 
 # Initialize NLP
 nlp = spacy.load("en_core_web_md")
@@ -20,6 +19,12 @@ nltk.download('wordnet')
 app = FastAPI()
 
 # Configuration
+AUTHORIZED_OPERATORS = {
+    "cone478", "cone353", "cone229", "cone516", "cone481", "cone335",
+    "cone424", "cone069", "cone096", "cone075", "cone136", "cone406",
+    "cone047", "cone461", "cone423", "cone290", "cone407", "cone468",
+    "cone221", "cone412", "cone413", "admin@company.com"
+}
 DATASET_PATH = Path("conversation_dataset.jsonl")
 UNCERTAIN_PATH = Path("uncertain_responses.jsonl")
 REPLY_POOLS_PATH = Path("reply_pools_augmented.json")
@@ -28,11 +33,17 @@ REPLY_POOLS_PATH = Path("reply_pools_augmented.json")
 USED_RESPONSES = defaultdict(set)
 USED_QUESTIONS = defaultdict(set)
 
+# Security dependency
+async def verify_operator(request: Request):
+    operator_email = request.headers.get("X-Operator-Email")
+    if not operator_email or operator_email not in AUTHORIZED_OPERATORS:
+        raise HTTPException(status_code=403, detail="Unauthorized operator")
+    return operator_email
+
 # Load or initialize reply pools
 if REPLY_POOLS_PATH.exists():
     with open(REPLY_POOLS_PATH, "r") as f:
         REPLY_POOLS = json.load(f)
-    # Ensure all categories have required fields
     for category in REPLY_POOLS.values():
         category.setdefault("triggers", [])
         category.setdefault("responses", [])
@@ -73,7 +84,7 @@ class SallyResponse(BaseModel):
     confidence: float
     replies: List[str]
 
-def log_to_dataset(user_input: str, response_data: dict):
+def log_to_dataset(user_input: str, response_data: dict, operator: str):
     entry = {
         "id": str(uuid.uuid4()),
         "timestamp": datetime.utcnow().isoformat(),
@@ -81,6 +92,7 @@ def log_to_dataset(user_input: str, response_data: dict):
         "matched_category": response_data["matched_category"],
         "response": response_data["replies"][0] if response_data["replies"] else None,
         "question": response_data["replies"][1] if len(response_data["replies"]) > 1 else None,
+        "operator": operator,
         "confidence": response_data["confidence"],
         "embedding": nlp(user_input).vector.tolist()
     }
@@ -136,7 +148,6 @@ def augment_dataset():
     with open(REPLY_POOLS_PATH, "w") as f:
         json.dump(REPLY_POOLS, f, indent=2)
     
-    # Reinitialize queues after augmentation
     global CATEGORY_QUEUES
     CATEGORY_QUEUES = {}
     for category, data in REPLY_POOLS.items():
@@ -150,26 +161,22 @@ def augment_dataset():
 def get_best_match(doc):
     best_match = ("general", None, 0.0)
     
-    # Enhanced matching with multiple strategies
     for category, data in REPLY_POOLS.items():
-        # Strategy 1: Full phrase similarity
         for trigger in data["triggers"]:
             trigger_doc = nlp(trigger)
             similarity = doc.similarity(trigger_doc)
             if similarity > best_match[2]:
                 best_match = (category, trigger, similarity)
         
-        # Strategy 2: Token-level matching with POS consideration
         for token in doc:
-            if token.pos_ in ["NOUN", "VERB", "ADJ"]:  # Focus on meaningful words
+            if token.pos_ in ["NOUN", "VERB", "ADJ"]:
                 for trigger in data["triggers"]:
                     if token.lemma_ in trigger.lower():
-                        current_sim = 0.7 + (0.3 * (token.pos_ == "NOUN"))  # Nouns get higher weight
+                        current_sim = 0.7 + (0.3 * (token.pos_ == "NOUN"))
                         if current_sim > best_match[2]:
                             best_match = (category, token.text, current_sim)
     
-    # Strategy 3: WordNet synonym expansion
-    if best_match[2] < 0.7:  # If confidence is low
+    if best_match[2] < 0.7:
         for token in doc:
             if token.pos_ in ["NOUN", "VERB"]:
                 synsets = wn.synsets(token.text)
@@ -177,7 +184,7 @@ def get_best_match(doc):
                     for lemma in syn.lemmas():
                         for category, data in REPLY_POOLS.items():
                             if lemma.name() in data["triggers"]:
-                                current_sim = 0.65  # Slightly lower confidence for synonyms
+                                current_sim = 0.65
                                 if current_sim > best_match[2]:
                                     best_match = (category, lemma.name(), current_sim)
     
@@ -188,17 +195,14 @@ def get_unique_response_pair(category):
     responses = category_data["responses"]
     questions = category_data["questions"]
     
-    # Find unused response-question pairs
     available_responses = [i for i in range(len(responses)) if i not in USED_RESPONSES[category]]
     available_questions = [i for i in range(len(questions)) if i not in USED_QUESTIONS[category]]
     
     if available_responses and available_questions:
-        # Try to find a fresh pair
         for r_idx in available_responses:
             for q_idx in available_questions:
                 return (r_idx, q_idx)
     
-    # If no fresh pairs, reset used sets and try again
     if not available_responses:
         USED_RESPONSES[category].clear()
         available_responses = list(range(len(responses)))
@@ -211,17 +215,18 @@ def get_unique_response_pair(category):
         q_idx = random.choice(available_questions)
         return (r_idx, q_idx)
     
-    # Fallback if still no pairs found
     return (0, 0) if responses and questions else (None, None)
 
-@app.post("/1C9I6F1O5R1C8O3N87E5145ID", response_model=SallyResponse)
-async def analyze_message(user_input: UserMessage):
+@app.post("/1D9I6F1O5R1C8O3N87E5145ID", response_model=SallyResponse)
+async def analyze_message(
+    user_input: UserMessage,
+    operator: str = Depends(verify_operator)
+):
     message = user_input.message.strip()
     doc = nlp(message.lower())
     
     best_match = get_best_match(doc)
     
-    # Prepare response
     response = {
         "matched_word": best_match[1] or "general",
         "matched_category": best_match[0],
@@ -229,7 +234,6 @@ async def analyze_message(user_input: UserMessage):
         "replies": []
     }
     
-    # Get non-repeating response pair
     category_data = REPLY_POOLS[best_match[0]]
     if category_data["responses"] and category_data["questions"]:
         r_idx, q_idx = get_unique_response_pair(best_match[0])
@@ -240,17 +244,14 @@ async def analyze_message(user_input: UserMessage):
             USED_RESPONSES[best_match[0]].add(r_idx)
             USED_QUESTIONS[best_match[0]].add(q_idx)
     
-    # Fallback if no responses found
     if not response["replies"]:
         response["replies"] = [
             "Honey, let's take this somewhere more private...",
             "What's your deepest, darkest fantasy?"
         ]
     
-    # Log interaction
-    log_to_dataset(message, response)
+    log_to_dataset(message, response, operator)
     
-    # Active learning
     if response["confidence"] < 0.6:
         store_uncertain(message)
         if len(response["replies"]) > 1:
@@ -259,7 +260,7 @@ async def analyze_message(user_input: UserMessage):
     return response
 
 @app.get("/dataset/analytics")
-async def get_analytics():
+async def get_analytics(operator: str = Depends(verify_operator)):
     analytics = {
         "total_entries": 0,
         "common_categories": {},
@@ -284,7 +285,7 @@ async def get_analytics():
     return analytics
 
 @app.post("/augment")
-async def trigger_augmentation():
+async def trigger_augmentation(operator: str = Depends(verify_operator)):
     augment_dataset()
     return {"status": "Dataset augmented", "new_pools": REPLY_POOLS}
 
