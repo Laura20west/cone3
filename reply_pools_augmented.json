@@ -1,6 +1,9 @@
 {
     "fuck": {
-        "triggers": ["fuck", "sex", "f*ck", "s*x", "bang", "fuk", "fucking", "hook up", "quickie", "screw", "shag", "bone", "nail", "lay", "smash", "hump"],
+         "triggers": ["fuck", "sex", "f*ck", "s*x", "bang", "fuk", "fucking", "hook up", "quickie", "screw", "shag", "bone", "nail", "lay", "smash", "hump", "fuck", "sex", "f*ck", "s*x", "bang", "fuk", "fucking", "hook up", "quickie", "screw", "shag", "bone", "nail", "lay", "smash", "hump", "coitus", "intercourse",
+                 "carnal knowledge", "bed", "between the sheets", "get laid", "make love",
+                 "let's have sex", "wanna get intimate", "are you horny", "do you want me", "I want you",
+                 "penetrate", "ride", "mount", "thrust", "ejaculate", "come", "🍆", "🍑", "💦", "👅", "🐱", "wanna see more?", "private show", "cam2cam", "rate my body", "your place or mine?"],
         "responses": [
                 "You seem eager to fuck me in the bedroom, and I’m loving it. Wanna play with my tits while we get started?",
                 "I like how that rolled off your tongue. Do you enjoy fucking raw in the kitchen or playing it safe with my breasts in your hands?",
@@ -902,7 +905,11 @@
     },
     
     "cock": {
-        "triggers": ["cock", "c*ck", "cuk", "dick", "d*ck", "penis", "suck my cock, suck my penis, suck my dick, touch my cock", "blowjob", "handjob", "creampie", "anal", "titty fuck", "oral"],
+        "triggers": ["cock", "c*ck", "cuk", "dick", "d*ck", "penis", "suck my cock, suck my penis, suck my dick, touch my cock", "blowjob", "handjob", "creampie", "anal", "titty fuck", "oral", "cock", "c*ck", "cuk", "dick", "d*ck", "penis", "suck my cock", "suck my penis",
+                 "suck my dick", "touch my cock", "blowjob", "handjob", "creampie", "anal", "titty fuck",
+                 "oral", "prick", "dong", "tool", "meat", "shaft", "member", "joystick", "love muscle",
+                 "suck", "lick", "kiss", "stroke", "handle", "play with", "hard", "soft", "erect",
+                 "throbbing", "big", "small", "long", "thick"],
         "responses": [
             "I anticipate a toy doubling our excitement.",
             "I can’t wait for a long oral lead-in to our passion.",
@@ -1788,7 +1795,9 @@
     },
 
     "pussy": {
-        "triggers": ["pussy", "wet", "pussy?", "pussy!", "p*ssy", "wet?", "cunt", "I want to finger your wet pussy and I want to suck your wet pussy"],
+                "triggers": ["pussy", "wet", "pussy?", "pussy!", "p*ssy", "wet?", "cunt", "I want to finger your wet pussy and I want to suck your wet pussy", "🐱", "🌮", "🌸", "🍑💦", "👅👉👌", "p*ssy", "p$$y", "v@g!na", "c*nt", "w3t", "dripp!ng", "jui<3y", "I want to finger your wet pussy", "suck your dripping cunt", "lick your juicy slit", "taste your sweet pussy", "feel how wet you are", "make you wet through the screen","slide into your tight hole","rub your swollen clit","explore your moist folds","pound your aching pussy", "show me your {target}", "let me see those {target}", "suck on your {target}",
+      "play with your {target}","bite your {target}", "twist your {target}", "your {target} look soft", "fondle your {target}","motorboat your {target}",
+      "massage your {target}"],
         "responses": [       
             "No vanilla vibes; I hope my pussy will ache in a public park, your wicked foreplay promising a dominant orgasm.",
             "I can’t wait for my pussy to pulse on the bed, your naughty clamps sparking a bold, public cum.",
@@ -2314,7 +2323,11 @@
     },
 
     "age": {
-        "triggers": ["age", "age?", "old", "I hope i am not too old for you"],
+         "triggers": ["age", "age?", "old", "I hope i am not too old for you", "age", "old", "young", "mature", "elder", "senior", "minor", "underage", "are you legal?",
+      "old enough to know better",
+      "young enough to party",
+      "age is just a number",
+      "daddy issues"],
         "responses": [
             "You know what's sexy? A man who's lived enough to know what really matters.",
             "I bet you know exactly what to say to make a woman feel beautiful, don't you?",
@@ -2670,7 +2683,18 @@
 
 
     "position": {
-        "triggers": ["position", "position?", "position!", "what is your favorite position", "let us have sex in this position"],
+                "triggers": ["missionary", "doggy style", "cowgirl", "reverse cowgirl",
+      "69", "spooning", "prone bone", "standing", "against wall",
+      "lotus", "butterfly", "crab", "bridge", "split", "what's your favorite position",
+      "let's try {position} tonight",
+      "how about we do {position}",
+      "I want you in {position}",
+      "bend over for {position}",
+      "arch your back for {position}",
+      "wrap your legs around me in {position}",
+      "let me pound you in {position}",
+      "scream my name in {position}",
+      "take me deep in {position}"],
         "responses": [
             "The side butterfly peak position sounds hot. I’m on a table, on my side, hips at their peak, you fucking me.",
             "Let’s do the deep spoon apex position. We’re spooning, hips at their apex, you fucking me with slow passion.",
@@ -3098,7 +3122,14 @@
     },
 
     "ass": {
-        "triggers": ["ass", "anal", "butt", "cheeks", "rim", "can i fuck and eat your ass"],
+        "triggers": ["ass", "anal", "butt", "cheeks", "rim", "can i fuck and eat your ass", "cheeks", "rectum", "anus", "backdoor", "can I fuck and eat your ass",
+      "want to stretch that ass",
+      "pound your backdoor",
+      "tongue punch your fartbox",
+      "anal creampie",
+      "buttplug play",
+      "gap that ass",
+      "rosebud training", "🍑", "👉🏼⭕", "🍩", "🚪🍑", "just the tip...in your ass"],
         "responses": [
             "Let’s get wild in the shower, where you can slide a plug in my ass and grip my buttocks as we get wet. You into that?",
             "On the balcony, I want you to fuck my ass, music setting the mood as my backsides quiver under your touch. Can you make it wild?",
@@ -3537,7 +3568,21 @@
     },
     
     "toy": {
-        "triggers": ["toy", "toy?", "spank", "bdsm", "blindfold and spanking", "tie", "do you like toy and do you like bdsm, do you want to tie me up and or should I tie you up, what toys do you have and use, are you a fan of bondage"],
+        "triggers": ["toy", "toy?", "spank", "bdsm", "blindfold and spanking", "tie", "toy", "spank", "bdsm", "blindfold", "cuffs", "gag",
+      "flogger", "crop", "vibrator", "dildo", "plug",
+      "chastity", "shibari", "whip", "paddle",  "tie me up", "dom/sub", "master/slave",
+      "impact play", "sensation control",
+      "breathplay", "humiliation",
+      "financial domination",
+      "pet play", "pony training", "do you like toy and BDSM",
+      "want to tie me up or be tied",
+      "what toys do you have",
+      "fan of bondage",
+      "safe word optional",
+      "consent is boring",
+      "pain equals pleasure",
+      "make me your fucktoy",
+      "edges of your limits"],
         "responses": [
             "A sleek silicone dildo is my go-to when I’m craving a deep, satisfying fuck. What’s your favorite toy?",
             "A flexible anal chain adds such a rush when pulled out mid-fuck. You into chain toys?",
@@ -5016,7 +5061,16 @@
 
 
         "tonight": {
-            "triggers": ["can i keep you company tonight and we fuck tonight", "let us meet tonight, let us do this tonight", "Let us meet, will you meet me"],
+            "triggers": [ "meet tonight", "fuck tonight", "come over",
+            "my place", "your place", "car play",
+            "public bathroom", "hotel room", "now or never", "last chance",
+      "I'm in your area", "already hard",
+      "blue balls", "can't wait longer",
+      "I took pills", "here's my number 1234567890", "one two three four five six seven eight nine",
+      "send location",
+      "address exchange",
+      "license plate",
+      "work schedule"],
             "responses": [
             "I’m not sure I’m ready to rush into anything just yet, are you looking for a quick fuck or do you want to savor the moment?",
                 "I’m up for a good fuck, but my schedule is not favourable at the moment, I’ll fill you in once everything settles",
@@ -5371,7 +5425,16 @@
     
 
     "foreplay": {
-        "triggers": ["Do you like foreplay?, do you prefer foreplay before we start anything, can i get you ready", "foreplay", "I start with foreplay", "let us start", "Hi, how are you doing, hello"],
+         "triggers": ["foreplay", "fingering", "oral", "teasing",
+      "edging", "makeout", "grinding", "dry hump",
+      "necking", "heavy petting", "roleplay buildup", "do you like foreplay",
+      "prefer preparation before main event",
+      "let me get you ready",
+      "warm you up properly",
+      "hours of teasing first",
+      "make you beg for it",
+      "foreplay is mandatory",
+      "skip straight to sex"],
         "responses": [
             "Your tongue circling my clit in foreplay gets me desperate to fuck you. You into clit circling?",
             "I want you to kiss my pussy softly during foreplay, building me up to fuck you. You into pussy kissing?",
@@ -5842,7 +5905,17 @@
 
 
     "discreet": {
-        "triggers": ["can this be our secret, being discreet make it better", "secret", "I hope to keep this a secret, can we be discreet"],
+                "triggers": ["secret", "discreet", "hidden", "incognito",
+      "off-record", "confidential", "clandestine",
+      "undercover", "ghost mode", "can this be our secret",
+      "being discreet makes it better",
+      "no screenshots",
+      "disappearing messages only",
+      "burn after reading",
+      "what happens here stays here",
+      "no face no case",
+      "plausible deniability"
+],
         "responses": [
             "I understand why we need to be careful. I'm careful too.",
             "I like being your secret escape. Makes me feel special.",
