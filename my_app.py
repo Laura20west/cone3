@@ -20,10 +20,7 @@ app = FastAPI()
 
 # Configuration
 AUTHORIZED_OPERATORS = {
-    "cone478", "cone353", "cone229", "cone516", "cone481", "cone335",
-    "cone424", "cone069", "cone096", "cone075", "cone136", "cone406",
-    "cone047", "cone461", "cone423", "cone290", "cone407", "cone468",
-    "cone221", "cone412", "cone413", "admin@company.com"
+    "cone047", "cone423", "cone290", "cone412", "cone461", "admin@company.com"
 }
 DATASET_PATH = Path("conversation_dataset.jsonl")
 UNCERTAIN_PATH = Path("uncertain_responses.jsonl")
