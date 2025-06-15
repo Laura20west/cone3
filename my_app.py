@@ -1,47 +1,50 @@
 from flask import Flask, request, jsonify
 from datetime import datetime
+from flask_sqlalchemy import SQLAlchemy
 import os
-import logging
-from logging.handlers import RotatingFileHandler
+from dotenv import load_dotenv
+
+# Load environment variables
+load_dotenv()
 
 app = Flask(__name__)
 
-# Configuration
-LOG_DIR = os.path.join(os.getcwd(), 'chat_logs')
-LOG_FILE = os.path.join(LOG_DIR, 'chat_messages.log')
-MAX_LOG_SIZE = 10 * 1024 * 1024  # 10MB
-BACKUP_COUNT = 5
+# Configure PostgreSQL connection
+app.config['SQLALCHEMY_DATABASE_URI'] = os.getenv('DATABASE_URL')
+app.config['SQLALCHEMY_TRACK_MODIFICATIONS'] = False
+db = SQLAlchemy(app)
 
-# Ensure log directory exists
-os.makedirs(LOG_DIR, exist_ok=True)
+# Message Model
+class ChatMessage(db.Model):
+    __tablename__ = 'chat_messages'
+    
+    id = db.Column(db.Integer, primary_key=True)
+    message_id = db.Column(db.String(100), nullable=False, unique=True)
+    text = db.Column(db.Text, nullable=False)
+    is_user = db.Column(db.Boolean, nullable=False)
+    sender = db.Column(db.String(50), nullable=True)
+    timestamp = db.Column(db.DateTime, nullable=False)
+    received_at = db.Column(db.DateTime, nullable=False)
+    platform = db.Column(db.String(50), default='myoperatorservice')
 
-# Set up logging
-handler = RotatingFileHandler(
-    LOG_FILE, 
-    maxBytes=MAX_LOG_SIZE, 
-    backupCount=BACKUP_COUNT,
-    encoding='utf-8'
-)
-handler.setFormatter(logging.Formatter(
-    '%(asctime)s - %(levelname)s - %(message)s'
-))
-app.logger.addHandler(handler)
-app.logger.setLevel(logging.INFO)
+    def __repr__(self):
+        return f'<Message {self.message_id}>'
 
-@app.route('/api/chat', methods=['POST'])
+# Create tables (only needed once)
+with app.app_context():
+    db.create_all()
+
+@app.route('/api/chat', methods=['POST', 'OPTIONS'])
 def receive_chat_messages():
-    """
-    Endpoint to receive chat messages from the TamperMonkey script.
-    """
-    try:
-        # Add CORS headers for web requests
-        if request.method == 'OPTIONS':
-            response = jsonify({"status": "success"})
-            response.headers.add('Access-Control-Allow-Origin', '*')
-            response.headers.add('Access-Control-Allow-Headers', '*')
-            response.headers.add('Access-Control-Allow-Methods', '*')
-            return response
+    """Endpoint to receive chat messages from Tampermonkey"""
+    if request.method == 'OPTIONS':
+        response = jsonify({"status": "success"})
+        response.headers.add('Access-Control-Allow-Origin', '*')
+        response.headers.add('Access-Control-Allow-Headers', 'Content-Type')
+        response.headers.add('Access-Control-Allow-Methods', 'POST')
+        return response
 
+    try:
         data = request.get_json()
         if not data or 'messages' not in data:
             app.logger.error("Invalid request: no messages in payload")
@@ -49,40 +52,100 @@ def receive_chat_messages():
 
         messages = data['messages']
         if not isinstance(messages, list):
-            app.logger.error("Invalid request: messages is not a list")
             return jsonify({"status": "error", "message": "Messages should be an array"}), 400
 
-        # Process each message
+        new_messages = []
         for msg in messages:
+            # Validate required fields
             if not all(key in msg for key in ['id', 'text', 'is_user', 'timestamp']):
                 app.logger.warning(f"Incomplete message received: {msg}")
                 continue
 
-            # Log the message
-            log_entry = {
-                'id': msg['id'],
-                'timestamp': msg['timestamp'],
-                'type': 'user' if msg['is_user'] else 'agent',
-                'message': msg['text'],
-                'received_at': datetime.utcnow().isoformat() + 'Z'
-            }
-            
-            app.logger.info(f"Message received: {log_entry}")
+            # Check if message already exists
+            if ChatMessage.query.filter_by(message_id=msg['id']).first():
+                continue
 
-        response = jsonify({"status": "success", "message": f"Processed {len(messages)} messages"})
+            # Create new message
+            new_msg = ChatMessage(
+                message_id=msg['id'],
+                text=msg['text'],
+                is_user=msg['is_user'],
+                sender='user' if msg['is_user'] else 'agent',
+                timestamp=datetime.fromisoformat(msg['timestamp'].rstrip('Z')),
+                received_at=datetime.utcnow()
+            )
+            db.session.add(new_msg)
+            new_messages.append(new_msg)
+
+        db.session.commit()
+        app.logger.info(f"Stored {len(new_messages)} new messages")
+
+        response = jsonify({
+            "status": "success",
+            "message": f"Processed {len(messages)} messages",
+            "stored": len(new_messages)
+        })
         response.headers.add('Access-Control-Allow-Origin', '*')
-        return response, 200
+        return response
 
     except Exception as e:
-        app.logger.error(f"Error processing request: {str(e)}")
+        db.session.rollback()
+        app.logger.error(f"Error processing messages: {str(e)}")
         response = jsonify({"status": "error", "message": str(e)})
         response.headers.add('Access-Control-Allow-Origin', '*')
         return response, 500
 
+@app.route('/api/messages', methods=['GET'])
+def get_messages():
+    """Endpoint to retrieve stored messages"""
+    try:
+        # Get query parameters
+        limit = min(int(request.args.get('limit', 100)), 1000)
+        offset = int(request.args.get('offset', 0))
+        is_user = request.args.get('is_user')
+        
+        # Build query
+        query = ChatMessage.query.order_by(ChatMessage.timestamp.desc())
+        
+        if is_user is not None:
+            query = query.filter_by(is_user=is_user.lower() == 'true')
+        
+        messages = query.limit(limit).offset(offset).all()
+        
+        response = jsonify([{
+            "id": msg.message_id,
+            "text": msg.text,
+            "is_user": msg.is_user,
+            "sender": msg.sender,
+            "timestamp": msg.timestamp.isoformat(),
+            "received_at": msg.received_at.isoformat(),
+            "platform": msg.platform
+        } for msg in messages])
+        
+        response.headers.add('Access-Control-Allow-Origin', '*')
+        return response
+    
+    except Exception as e:
+        app.logger.error(f"Error retrieving messages: {str(e)}")
+        return jsonify({"status": "error", "message": str(e)}), 500
+
 @app.route('/api/health', methods=['GET'])
 def health_check():
     """Health check endpoint"""
-    return jsonify({"status": "healthy"}), 200
+    try:
+        # Test database connection
+        db.session.execute('SELECT 1')
+        return jsonify({
+            "status": "healthy",
+            "database": "connected",
+            "timestamp": datetime.utcnow().isoformat()
+        })
+    except Exception as e:
+        return jsonify({
+            "status": "unhealthy",
+            "database": "disconnected",
+            "error": str(e)
+        }), 500
 
 if __name__ == '__main__':
     port = int(os.environ.get('PORT', 5000))
