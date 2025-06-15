@@ -1,38 +1,37 @@
 from flask import Flask, request, jsonify
 from datetime import datetime
-from flask_sqlalchemy import SQLAlchemy
+import logging
+from logging.handlers import RotatingFileHandler
+from collections import deque
 import os
-from dotenv import load_dotenv
-
-# Load environment variables
-load_dotenv()
 
 app = Flask(__name__)
 
-# Configure PostgreSQL connection
-app.config['SQLALCHEMY_DATABASE_URI'] = os.getenv('DATABASE_URL')
-app.config['SQLALCHEMY_TRACK_MODIFICATIONS'] = False
-db = SQLAlchemy(app)
+# Configuration
+LOG_DIR = 'chat_logs'
+LOG_FILE = os.path.join(LOG_DIR, 'chat_messages.log')
+MAX_LOG_SIZE = 10 * 1024 * 1024  # 10MB
+BACKUP_COUNT = 5
+MAX_MEMORY_MESSAGES = 1000  # Keep last 1000 messages in memory
 
-# Message Model
-class ChatMessage(db.Model):
-    __tablename__ = 'chat_messages'
-    
-    id = db.Column(db.Integer, primary_key=True)
-    message_id = db.Column(db.String(100), nullable=False, unique=True)
-    text = db.Column(db.Text, nullable=False)
-    is_user = db.Column(db.Boolean, nullable=False)
-    sender = db.Column(db.String(50), nullable=True)
-    timestamp = db.Column(db.DateTime, nullable=False)
-    received_at = db.Column(db.DateTime, nullable=False)
-    platform = db.Column(db.String(50), default='myoperatorservice')
+# Ensure log directory exists
+os.makedirs(LOG_DIR, exist_ok=True)
 
-    def __repr__(self):
-        return f'<Message {self.message_id}>'
+# Set up file logging
+file_handler = RotatingFileHandler(
+    LOG_FILE, 
+    maxBytes=MAX_LOG_SIZE, 
+    backupCount=BACKUP_COUNT,
+    encoding='utf-8'
+)
+file_handler.setFormatter(logging.Formatter(
+    '%(asctime)s - %(levelname)s - %(message)s'
+))
+app.logger.addHandler(file_handler)
+app.logger.setLevel(logging.INFO)
 
-# Create tables (only needed once)
-with app.app_context():
-    db.create_all()
+# In-memory message storage
+message_store = deque(maxlen=MAX_MEMORY_MESSAGES)
 
 @app.route('/api/chat', methods=['POST', 'OPTIONS'])
 def receive_chat_messages():
@@ -62,23 +61,24 @@ def receive_chat_messages():
                 continue
 
             # Check if message already exists
-            if ChatMessage.query.filter_by(message_id=msg['id']).first():
+            if any(m['id'] == msg['id'] for m in message_store):
                 continue
 
-            # Create new message
-            new_msg = ChatMessage(
-                message_id=msg['id'],
-                text=msg['text'],
-                is_user=msg['is_user'],
-                sender='user' if msg['is_user'] else 'agent',
-                timestamp=datetime.fromisoformat(msg['timestamp'].rstrip('Z')),
-                received_at=datetime.utcnow()
-            )
-            db.session.add(new_msg)
-            new_messages.append(new_msg)
-
-        db.session.commit()
-        app.logger.info(f"Stored {len(new_messages)} new messages")
+            # Create message object
+            message_obj = {
+                'id': msg['id'],
+                'text': msg['text'],
+                'is_user': msg['is_user'],
+                'sender': 'user' if msg['is_user'] else 'agent',
+                'timestamp': msg['timestamp'],
+                'received_at': datetime.utcnow().isoformat() + 'Z',
+                'platform': 'myoperatorservice'
+            }
+            
+            # Store in memory and log to file
+            message_store.append(message_obj)
+            app.logger.info(f"Message received: {message_obj}")
+            new_messages.append(message_obj)
 
         response = jsonify({
             "status": "success",
@@ -89,7 +89,6 @@ def receive_chat_messages():
         return response
 
     except Exception as e:
-        db.session.rollback()
         app.logger.error(f"Error processing messages: {str(e)}")
         response = jsonify({"status": "error", "message": str(e)})
         response.headers.add('Access-Control-Allow-Origin', '*')
@@ -99,29 +98,19 @@ def receive_chat_messages():
 def get_messages():
     """Endpoint to retrieve stored messages"""
     try:
-        # Get query parameters
+        # Get query parameters with defaults
         limit = min(int(request.args.get('limit', 100)), 1000)
-        offset = int(request.args.get('offset', 0))
         is_user = request.args.get('is_user')
         
-        # Build query
-        query = ChatMessage.query.order_by(ChatMessage.timestamp.desc())
-        
+        # Filter messages if is_user parameter provided
+        messages = list(message_store)
         if is_user is not None:
-            query = query.filter_by(is_user=is_user.lower() == 'true')
+            filter_user = is_user.lower() == 'true'
+            messages = [m for m in messages if m['is_user'] == filter_user]
         
-        messages = query.limit(limit).offset(offset).all()
-        
-        response = jsonify([{
-            "id": msg.message_id,
-            "text": msg.text,
-            "is_user": msg.is_user,
-            "sender": msg.sender,
-            "timestamp": msg.timestamp.isoformat(),
-            "received_at": msg.received_at.isoformat(),
-            "platform": msg.platform
-        } for msg in messages])
-        
+        # Return most recent messages first
+        messages.reverse()
+        response = jsonify(messages[:limit])
         response.headers.add('Access-Control-Allow-Origin', '*')
         return response
     
@@ -129,23 +118,88 @@ def get_messages():
         app.logger.error(f"Error retrieving messages: {str(e)}")
         return jsonify({"status": "error", "message": str(e)}), 500
 
+@app.route('/messages', methods=['GET'])
+def message_viewer():
+    """Web interface to view messages"""
+    return """
+    <!DOCTYPE html>
+    <html>
+    <head>
+        <title>Chat Message Viewer</title>
+        <style>
+            body { font-family: Arial, sans-serif; margin: 20px; }
+            .message { margin-bottom: 15px; padding: 10px; border-radius: 5px; }
+            .user { background-color: #e3f2fd; }
+            .agent { background-color: #f5f5f5; }
+            .timestamp { color: #666; font-size: 0.8em; }
+            .controls { margin-bottom: 20px; }
+        </style>
+    </head>
+    <body>
+        <h1>Chat Messages</h1>
+        <div class="controls">
+            <label>
+                <input type="checkbox" id="filter-user" onchange="loadMessages()">
+                Show only user messages
+            </label>
+            <button onclick="loadMessages()">Refresh</button>
+        </div>
+        <div id="messages-container"></div>
+        
+        <script>
+            function formatDate(isoString) {
+                const date = new Date(isoString);
+                return date.toLocaleString();
+            }
+            
+            async function loadMessages() {
+                const filterUser = document.getElementById('filter-user').checked;
+                const url = `/api/messages?limit=100${filterUser ? '&is_user=true' : ''}`;
+                
+                try {
+                    const response = await fetch(url);
+                    const messages = await response.json();
+                    
+                    const container = document.getElementById('messages-container');
+                    container.innerHTML = '';
+                    
+                    if (messages.length === 0) {
+                        container.innerHTML = '<p>No messages found</p>';
+                        return;
+                    }
+                    
+                    messages.forEach(msg => {
+                        const div = document.createElement('div');
+                        div.className = `message ${msg.is_user ? 'user' : 'agent'}`;
+                        div.innerHTML = `
+                            <div class="timestamp">${formatDate(msg.timestamp)} (received: ${formatDate(msg.received_at)})</div>
+                            <strong>${msg.sender}:</strong>
+                            <div>${msg.text}</div>
+                        `;
+                        container.appendChild(div);
+                    });
+                } catch (error) {
+                    console.error('Error loading messages:', error);
+                    document.getElementById('messages-container').innerHTML = 
+                        '<p>Error loading messages. Check console for details.</p>';
+                }
+            }
+            
+            // Load messages when page loads
+            document.addEventListener('DOMContentLoaded', loadMessages);
+        </script>
+    </body>
+    </html>
+    """
+
 @app.route('/api/health', methods=['GET'])
 def health_check():
     """Health check endpoint"""
-    try:
-        # Test database connection
-        db.session.execute('SELECT 1')
-        return jsonify({
-            "status": "healthy",
-            "database": "connected",
-            "timestamp": datetime.utcnow().isoformat()
-        })
-    except Exception as e:
-        return jsonify({
-            "status": "unhealthy",
-            "database": "disconnected",
-            "error": str(e)
-        }), 500
+    return jsonify({
+        "status": "healthy",
+        "message_count": len(message_store),
+        "timestamp": datetime.utcnow().isoformat()
+    })
 
 if __name__ == '__main__':
     port = int(os.environ.get('PORT', 5000))
