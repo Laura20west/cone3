@@ -1,293 +1,228 @@
-from fastapi import FastAPI, HTTPException, Request, Depends
-from fastapi.middleware.cors import CORSMiddleware
-from pydantic import BaseModel
-import spacy
+from flask import Flask, request, jsonify
 import json
-from datetime import datetime
-from pathlib import Path
-import uuid
 import random
-from collections import defaultdict, deque, Counter
-import nltk
-from nltk.corpus import wordnet as wn
-from typing import Dict, List, Optional, Tuple
-import asyncio
+import numpy as np
+from sklearn.feature_extraction.text import TfidfVectorizer
+from sklearn.metrics.pairwise import cosine_similarity
+from transformers import pipeline, AutoModelForSeq2SeqLM, AutoTokenizer
+import os
+from datetime import datetime
+import sqlite3
+from collections import deque
 
-# Initialize NLP
-try:
-    nlp = spacy.load("en_core_web_md")
-except OSError:
-    import subprocess
-    subprocess.run(["python", "-m", "spacy", "download", "en_core_web_md"])
-    nlp = spacy.load("en_core_web_md")
-
-nltk.download('wordnet')
-
-app = FastAPI()
+app = Flask(__name__)
 
 # Configuration
-AUTHORIZED_OPERATORS = {
-        "cone047", "cone413", "cone290", "cone407", "cone461", "admin@company.com"
-    }
-DATASET_PATH = Path("conversation_dataset.jsonl")
-UNCERTAIN_PATH = Path("uncertain_responses.jsonl")
-REPLY_POOLS_PATH = Path("reply_pools_augmented.json")
+DATABASE_FILE = "conversations.db"
+LOG_FILE = "conversation_logs.json"
+MAX_DATASET_SIZE = 10000
 
-# Precompute for faster access
-CATEGORY_NAMES = set()
-TRIGGER_CACHE = defaultdict(list)
-
-# Security dependency
-async def verify_operator(request: Request):
-    operator_email = request.headers.get("X-Operator-Email")
-    if operator_email in AUTHORIZED_OPERATORS:
-        return operator_email
-    raise HTTPException(status_code=403, detail="Unauthorized operator")
-
-# Load or initialize reply pools
-if REPLY_POOLS_PATH.exists():
-    with open(REPLY_POOLS_PATH, "r") as f:
-        REPLY_POOLS = json.load(f)
-    for category, data in REPLY_POOLS.items():
-        data.setdefault("triggers", [])
-        data.setdefault("responses", [])
-        data.setdefault("questions", [])
-        CATEGORY_NAMES.add(category)
-        for trigger in data["triggers"]:
-            TRIGGER_CACHE[category].append((trigger, nlp(trigger.lower())))
-else:
-    REPLY_POOLS = {
-        "general": {
-            "triggers": [],
-            "responses": ["Honey, let's talk about something more exciting..."],
-            "questions": ["What really gets you going?"]
-        }
-    }
-    CATEGORY_NAMES.add("general")
-
-class ResponseSelector:
-    def __init__(self):
-        self.used_combinations = defaultdict(set)
-        self.available_combinations = defaultdict(deque)
-        self._initialize_combinations()
+# Initialize database
+def initialize_database():
+    conn = sqlite3.connect(DATABASE_FILE)
+    cursor = conn.cursor()
     
-    def _initialize_combinations(self):
-        for category, data in REPLY_POOLS.items():
-            responses = data["responses"]
-            questions = data["questions"]
-            combinations = [(r_idx, q_idx) 
-                          for r_idx in range(len(responses))
-                          for q_idx in range(len(questions))]
-            random.shuffle(combinations)
-            self.available_combinations[category] = deque(combinations)
-    
-    def get_unique_pair(self, category: str) -> Tuple[Optional[int], Optional[int]]:
-        if category not in self.available_combinations:
-            return (None, None)
-            
-        # Get next available combination
-        while self.available_combinations[category]:
-            r_idx, q_idx = self.available_combinations[category].popleft()
-            if (r_idx, q_idx) not in self.used_combinations[category]:
-                self.used_combinations[category].add((r_idx, q_idx))
-                return (r_idx, q_idx)
-        
-        # If we've used all combinations, reset and try again
-        self._reset_category(category)
-        if self.available_combinations[category]:
-            r_idx, q_idx = self.available_combinations[category].popleft()
-            self.used_combinations[category].add((r_idx, q_idx))
-            return (r_idx, q_idx)
-        return (None, None)
-    
-    def _reset_category(self, category: str):
-        self.used_combinations[category].clear()
-        self._initialize_combinations()
-
-response_selector = ResponseSelector()
-
-app.add_middleware(
-    CORSMiddleware,
-    allow_origins=["*"],
-    allow_methods=["*"],
-    allow_headers=["*"],
-    expose_headers=["*"]
-)
-
-class UserMessage(BaseModel):
-    message: str
-
-class SallyResponse(BaseModel):
-    matched_word: str
-    matched_category: str
-    confidence: float
-    replies: List[str]
-
-async def log_to_dataset(user_input: str, response_data: dict, operator: str):
-    entry = {
-        "id": str(uuid.uuid4()),
-        "timestamp": datetime.utcnow().isoformat(),
-        "user_input": user_input,
-        "matched_category": response_data["matched_category"],
-        "response": response_data["replies"][0] if response_data["replies"] else None,
-        "question": response_data["replies"][1] if len(response_data["replies"]) > 1 else None,
-        "operator": operator,
-        "confidence": response_data["confidence"],
-        "embedding": nlp(user_input).vector.tolist()
-    }
-    
-    with open(DATASET_PATH, "a") as f:
-        f.write(json.dumps(entry) + "\n")
-
-async def store_uncertain(user_input: str):
-    entry = {
-        "id": str(uuid.uuid4()),
-        "timestamp": datetime.utcnow().isoformat(),
-        "user_input": user_input,
-        "reviewed": False
-    }
-    
-    with open(UNCERTAIN_PATH, "a") as f:
-        f.write(json.dumps(entry) + "\n")
-
-def augment_dataset():
-    if not DATASET_PATH.exists():
-        return
-    
-    with open(DATASET_PATH, "r") as f:
-        entries = [json.loads(line) for line in f]
-    
-    category_counts = Counter(entry["matched_category"] for entry in entries)
-    avg_count = sum(category_counts.values()) / len(category_counts) if category_counts else 0
-    
-    for category in [k for k, v in category_counts.items() if v < avg_count * 0.5]:
-        if category not in REPLY_POOLS:
-            continue
-            
-        base_triggers = REPLY_POOLS[category]["triggers"]
-        new_triggers = set()
-        
-        for trigger in base_triggers:
-            doc = nlp(trigger)
-            new_triggers.add(" ".join([token.lemma_ for token in doc]))
-            
-            for token in doc:
-                if token.pos_ in ["NOUN", "VERB"]:
-                    syns = [syn.lemmas()[0].name() for syn in wn.synsets(token.text)]
-                    if syns:
-                        new_triggers.add(trigger.replace(token.text, syns[0]))
-        
-        REPLY_POOLS[category]["triggers"] = list(set(REPLY_POOLS[category]["triggers"]) | new_triggers)
-        TRIGGER_CACHE[category].extend(
-            (trigger, nlp(trigger.lower()))
-            for trigger in new_triggers
-            if trigger not in {t[0] for t in TRIGGER_CACHE[category]}
+    cursor.execute('''
+        CREATE TABLE IF NOT EXISTS conversations (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            session_id TEXT NOT NULL,
+            user_message TEXT NOT NULL,
+            bot_response TEXT NOT NULL,
+            timestamp DATETIME DEFAULT CURRENT_TIMESTAMP
         )
+    ''')
     
-    with open(REPLY_POOLS_PATH, "w") as f:
-        json.dump(REPLY_POOLS, f, indent=2)
-    
-    response_selector._initialize_combinations()
+    conn.commit()
+    conn.close()
 
-def get_best_match(doc) -> Tuple[str, str, float]:
-    best_match = ("general", None, 0.0)
+def load_conversation_dataset():
+    """Load conversation history from database into memory"""
+    dataset = deque(maxlen=MAX_DATASET_SIZE)
+    try:
+        conn = sqlite3.connect(DATABASE_FILE)
+        cursor = conn.cursor()
+        cursor.execute('''
+            SELECT user_message, bot_response 
+            FROM conversations 
+            ORDER BY timestamp DESC
+            LIMIT ?
+        ''', (MAX_DATASET_SIZE,))
+        
+        # Add in chronological order (oldest first)
+        for row in reversed(cursor.fetchall()):
+            dataset.append(row)
+            
+        conn.close()
+        print(f"Loaded {len(dataset)} conversation pairs into memory")
+    except Exception as e:
+        print(f"Error loading conversation dataset: {str(e)}")
     
-    for category in CATEGORY_NAMES:
-        for trigger, trigger_doc in TRIGGER_CACHE[category]:
-            if trigger.lower() in doc.text:
-                return (category, trigger, 1.0)
-    
-    for category in CATEGORY_NAMES:
-        for trigger, trigger_doc in TRIGGER_CACHE[category]:
-            similarity = doc.similarity(trigger_doc)
-            if similarity > best_match[2]:
-                best_match = (category, trigger, similarity)
-                if similarity > 0.9:
-                    return best_match
-    
-    for token in doc:
-        if token.pos_ in ["NOUN", "VERB", "ADJ"]:
-            for category in CATEGORY_NAMES:
-                for trigger, _ in TRIGGER_CACHE[category]:
-                    if token.lemma_ in trigger.lower():
-                        current_sim = 0.7 + (0.3 * (token.pos_ == "NOUN"))
-                        if current_sim > best_match[2]:
-                            best_match = (category, token.text, current_sim)
-    
-    return best_match
+    return dataset
 
-@app.post("/1D9I6F1O5R1C8O3N87E5145ID", response_model=SallyResponse)
-async def analyze_message(
-    request: Request,
-    user_input: UserMessage,
-    operator: str = Depends(verify_operator)
-):
-    message = user_input.message.strip()
-    doc = nlp(message.lower())
+def initialize_models():
+    try:
+        paraphrase_model = pipeline(
+            "text2text-generation", 
+            model="tuner007/pegasus_paraphrase",
+            device=0 if os.getenv('USE_GPU') == '1' else -1
+        )
+        return paraphrase_model
+    except Exception as e:
+        print(f"Error initializing paraphrase model: {str(e)}")
+        return None
+
+# Initialize everything at startup
+initialize_database()
+conversation_dataset = load_conversation_dataset()
+paraphrase_model = initialize_models()
+
+# Helper functions
+def find_best_match(user_input):
+    """Find the best matching conversation pair using TF-IDF and cosine similarity"""
+    if not conversation_dataset:
+        return None, None
     
-    category, matched_word, confidence = get_best_match(doc)
+    # Extract user messages from dataset
+    user_messages = [pair[0] for pair in conversation_dataset]
     
-    response = {
-        "matched_word": matched_word or "general",
-        "matched_category": category,
-        "confidence": round(confidence, 2),
-        "replies": []
-    }
+    # Vectorize messages
+    vectorizer = TfidfVectorizer(stop_words='english')
+    try:
+        tfidf_matrix = vectorizer.fit_transform(user_messages)
+    except ValueError:  # Happens if all messages are empty
+        return None, None
     
-    if REPLY_POOLS[category]["responses"] and REPLY_POOLS[category]["questions"]:
-        r_idx, q_idx = response_selector.get_unique_pair(category)
-        if r_idx is not None and q_idx is not None:
-            response["replies"].append(REPLY_POOLS[category]["responses"][r_idx])
-            response["replies"].append(REPLY_POOLS[category]["questions"][q_idx])
+    # Calculate similarities
+    query_vec = vectorizer.transform([user_input])
+    similarities = cosine_similarity(query_vec, tfidf_matrix).flatten()
     
-    if not response["replies"]:
-        response["replies"] = [
-            "Honey, let's take this somewhere more private...",
-            "What's your deepest, darkest fantasy?"
-        ]
+    # Find top matches
+    top_indices = similarities.argsort()[-5:][::-1]  # Top 5 matches
     
-    asyncio.create_task(log_to_dataset(message, response, operator))
+    if not top_indices.size:
+        return None, None
     
-    if confidence < 0.6:
-        asyncio.create_task(store_uncertain(message))
-        if len(response["replies"]) > 1:
-            response["replies"][1] += " Could you rephrase that, baby?"
+    # Select a random top match
+    chosen_idx = random.choice(top_indices)
+    return conversation_dataset[chosen_idx]
+
+def paraphrase_response(response):
+    """Paraphrase the response using Pegasus model"""
+    if not paraphrase_model:
+        return response
+    
+    try:
+        paraphrases = paraphrase_model(
+            response,
+            max_length=60,
+            num_return_sequences=1,
+            num_beams=5
+        )
+        if paraphrases and 'generated_text' in paraphrases[0]:
+            return paraphrases[0]['generated_text']
+    except Exception as e:
+        print(f"Error paraphrasing response: {str(e)}")
     
     return response
 
-@app.get("/dataset/analytics")
-async def get_analytics(request: Request, operator: str = Depends(verify_operator)):
-    analytics = {
-        "total_entries": 0,
-        "common_categories": {},
-        "confidence_stats": {}
+def log_conversation(session_id, user_message, bot_response):
+    try:
+        conn = sqlite3.connect(DATABASE_FILE)
+        cursor = conn.cursor()
+        
+        cursor.execute('''
+            INSERT INTO conversations 
+            (session_id, user_message, bot_response)
+            VALUES (?, ?, ?)
+        ''', (session_id, user_message, bot_response))
+        
+        conn.commit()
+        conn.close()
+        
+        # Add to in-memory dataset
+        conversation_dataset.append((user_message, bot_response))
+        
+        # Log to JSON file
+        log_entry = {
+            "timestamp": datetime.now().isoformat(),
+            "session_id": session_id,
+            "user_message": user_message,
+            "bot_response": bot_response
+        }
+        
+        with open(LOG_FILE, 'a') as f:
+            f.write(json.dumps(log_entry) + '\n')
+            
+        return True
+    except Exception as e:
+        print(f"Error logging conversation: {str(e)}")
+        return False
+
+# API Endpoints
+@app.route('/chat', methods=['POST'])
+def chat():
+    # Get request data
+    data = request.get_json()
+    if not data or 'message' not in data:
+        return jsonify({"error": "Missing message in request"}), 400
+    
+    user_message = data['message']
+    session_id = data.get('session_id', "default_session")
+    
+    # Find best matching conversation pair
+    matched_pair = find_best_match(user_message)
+    
+    if matched_pair:
+        _, orig_bot_response = matched_pair
+        paraphrased_response = paraphrase_response(orig_bot_response)
+    else:
+        paraphrased_response = "I'm still learning. Could you tell me more about that?"
+    
+    # Log the conversation
+    log_conversation(session_id, user_message, paraphrased_response)
+    
+    # Prepare response
+    response = {
+        "response": paraphrased_response,
+        "session_id": session_id,
+        "timestamp": datetime.now().isoformat()
     }
     
-    if DATASET_PATH.exists():
-        try:
-            with open(DATASET_PATH, "r") as f:
-                entries = [json.loads(line) for line in f]
-            
-            analytics["total_entries"] = len(entries)
-            analytics["common_categories"] = Counter(entry["matched_category"] for entry in entries)
-            
-            if entries:
-                confidences = [entry["confidence"] for entry in entries]
-                analytics["confidence_stats"] = {
-                    "average": round(sum(confidences)/len(confidences), 2),
-                    "min": round(min(confidences), 2),
-                    "max": round(max(confidences), 2)
-                }
-        except Exception as e:
-            print(f"Error reading analytics: {e}")
-    
-    return analytics
+    return jsonify(response)
 
-@app.post("/augment")
-async def trigger_augmentation(request: Request, operator: str = Depends(verify_operator)):
-    augment_dataset()
-    return {"status": "Dataset augmented", "new_pools": REPLY_POOLS}
+@app.route('/conversations', methods=['GET'])
+def get_conversations():
+    try:
+        # Get query parameters
+        limit = request.args.get('limit', default=100, type=int)
+        session_id = request.args.get('session_id')
+        
+        conn = sqlite3.connect(DATABASE_FILE)
+        cursor = conn.cursor()
+        
+        query = "SELECT * FROM conversations"
+        params = []
+        
+        if session_id:
+            query += " WHERE session_id = ?"
+            params.append(session_id)
+        
+        query += " ORDER BY timestamp DESC LIMIT ?"
+        params.append(limit)
+        
+        cursor.execute(query, params)
+        conversations = cursor.fetchall()
+        
+        # Convert to list of dicts
+        columns = [column[0] for column in cursor.description]
+        result = [dict(zip(columns, row)) for row in conversations]
+        
+        conn.close()
+        
+        return jsonify({"conversations": result})
+    
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
 
 if __name__ == "__main__":
-    import uvicorn
-    uvicorn.run(app, host="0.0.0.0", port=8000, workers=4)
+    app.run(host="0.0.0.0", port=5000, debug=True)
