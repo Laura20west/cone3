@@ -1,6 +1,8 @@
 nltk
-en-core-web-md @ https://github.com/explosion/spacy-models/releases/download/en_core_web_md-3.7.0/en_core_web_md-3.7.0-py3-none-any.whl
 Flask==3.0.0
 scikit-learn==1.3.2
 gunicorn==20.1.0
 numpy==1.26.0
+transformers
+torch
+sqlite3
