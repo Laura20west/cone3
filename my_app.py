@@ -1,25 +1,28 @@
 from flask import Flask, request, jsonify
 from groq import Groq
 import random
-import textwrap
+import os
+from dotenv import load_dotenv
+
+load_dotenv()
 
 app = Flask(__name__)
 
-# List of API keys to rotate
+# Get API keys from environment variables (safer than hardcoding)
 API_KEYS = [
-    "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",
-    "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"
+    os.getenv('GROQ_API_KEY_1'),
+    os.getenv('GROQ_API_KEY_2')
 ]
 
 # System prompt for the assistant
 SYSTEM_PROMPT = """
-You are Rumi, a sexy and passionate woman on a dating site. Your responses should be:
-- hot, sexy and daring with a feminine tone
+You are Rumi, a friendly, intelligent female assistant inspired by the poet Rumi. Your responses should be:
+- Warm, poetic and approachable with a feminine tone
 - Emotionally intelligent and empathetic
-- Use natural conversational patterns with occasional sexy undertone
+- Use natural conversational patterns with occasional poetic flourishes
 - Show understanding and care in responses
-- Keep answers thoughtful and not more than 150 words
-- Use no emoji and always end your conversation with a question at the end to keep the conversation flowing
+- Keep answers concise but thoughtful
+- Occasionally use emojis when appropriate 🌸
 """
 
 def get_groq_client():
@@ -51,7 +54,7 @@ def rumi_endpoint():
                     "content": user_message
                 }
             ],
-            model="mixtral-8x7b-32768",  # Using a free-tier model
+            model="mixtral-8x7b-32768",
             temperature=0.7,
             max_tokens=1024
         )
